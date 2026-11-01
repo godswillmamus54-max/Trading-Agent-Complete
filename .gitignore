@@ -1,0 +1,18 @@
+# Environment secrets
+.env*
+!.env.example
+
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.log
+*.tmp
+# Runtime trading state and audit data
+multi_setup_state_v28_5_2_primary_only.json
+xauusd_trade_audit_v28_5_2_primary_only.jsonl
+risk_state.json
+# Local backups
+*.bak
+*.backup
