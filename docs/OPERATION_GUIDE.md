@@ -5,61 +5,69 @@
 Confirm the following:
 
 - MetaTrader 5 is installed and running.
-- You are logged into an MT5 demo account.
+- You are logged into your own MT5 demo account.
 - The terminal is connected to the broker.
-- The project's virtual environment is activated.
-- The `.env` file exists and contains a valid API key.
+- Automated trading permissions are enabled.
+- The project's `.venv` environment exists.
+- The `.env` file exists and contains a valid private API key.
 - The configured risk settings have been reviewed.
-- The bridge port is available.
+- Port 8000 is available.
 
-## 2. Start the Bridge
+## 2. Start the System — One-Click Startup
 
-Open a PowerShell terminal in the project directory.
+1. Open MetaTrader 5.
+2. Log in to your demo account.
+3. Confirm the terminal is connected.
+4. Confirm automated trading permissions.
+5. Navigate to the `Trading-Agent-Complete` project folder.
+6. Double-click `START_TRADING_AGENT.bat`.
+7. Wait for the startup controller to perform its checks.
 
-Activate the virtual environment:
+The launcher performs the following checks before starting the trading engine:
+
+- Python environment verification.
+- API key configuration.
+- Local bridge URL validation.
+- MT5 bridge health and connection.
+- MT5 demo-account verification.
+- Trading permission verification.
+
+The trading engine starts only after these checks pass.
+
+Keep the launcher window open while the system is running.
+
+## 3. Stop the System
+
+To request shutdown:
+
+1. Focus the launcher terminal window.
+2. Press `Ctrl+C`.
+3. Allow the launcher to stop the trading engine and bridge.
+4. Confirm the startup session has ended.
+
+Do not close the terminal abruptly while the system is operating.
+
+## 4. Manual Startup — Alternative
+
+The components can also be started separately.
+
+First terminal:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-```
-
-Start the bridge:
-
-```powershell
 python run_bridge.py
 ```
 
-Keep this terminal open while the system is running.
-
-The bridge uses the default local address:
-
-`http://127.0.0.1:8000`
-
-## 3. Start the Trading Agent
-
-Open a second PowerShell terminal in the project directory.
-
-Activate the virtual environment:
+Second terminal:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-```
-
-Start the agent:
-
-```powershell
 python run_agent.py
 ```
 
-Keep both terminals running during operation.
+Keep both terminals open while the system is running.
 
-## 4. Stop the System
-
-To stop the system safely:
-
-1. Press `Ctrl + C` in the agent terminal.
-2. Wait for the agent process to stop.
-3. Press `Ctrl + C` in the bridge terminal.
-4. Confirm both processes have stopped.
+To stop the manual setup, stop the trading engine first, then the bridge.
 
 ## 5. Troubleshooting
 
@@ -67,9 +75,22 @@ To stop the system safely:
 
 Check that `.env` exists and contains a valid `MT5_BRIDGE_API_KEY`.
 
+Never share your private API key.
+
 ### Bridge Connection Failure
 
-Confirm that the bridge is running and that `MT5_BRIDGE_URL` points to the correct local address.
+Confirm that:
+
+- MT5 is running.
+- The terminal is connected.
+- The bridge URL is correct.
+- Port 8000 is available.
+
+### Demo Account Verification Failure
+
+Confirm that MT5 is logged into a demo account.
+
+The launcher blocks startup if the account cannot be verified as a demo account.
 
 ### MT5 Initialization Failure
 
@@ -85,7 +106,7 @@ Check:
 Activate the virtual environment and run:
 
 ```powershell
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ### Port Already in Use
@@ -94,7 +115,9 @@ Check whether another application or bridge process is using port 8000 before at
 
 ## 6. Operational Caution
 
-The seven source-level safety tests do not replace a complete MT5 demo-account integration test.
+The 15 automated tests include source-level bridge safety checks and isolated launcher tests using mocked responses.
+
+They do not replace a complete MT5 demo-account integration test.
 
 Do not assume successful installation means that order execution, broker connectivity, or strategy performance has been validated.
 

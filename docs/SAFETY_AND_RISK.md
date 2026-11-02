@@ -52,9 +52,14 @@ Do not enable it without configuring and testing the separate shadow bridge.
 
 ## 6. Testing Status
 
-The package currently has seven source-level safety tests.
+The package currently has 15 automated tests:
 
-These tests check source structure and selected safety conditions. They do not prove:
+- Seven bridge source-level safety tests.
+- Eight isolated launcher tests using mocked bridge and account responses.
+
+The launcher tests verify configuration validation, local bridge restrictions, demo-account verification, and trading permission checks.
+
+These tests do not prove:
 
 - Successful connection to a broker.
 - Correct order execution under all conditions.
@@ -62,7 +67,7 @@ These tests check source structure and selected safety conditions. They do not p
 - Protection against every execution race or failure.
 - Profitability or future performance.
 
-A separate demo-account integration test is required.
+A separate MT5 demo-account integration test is still required.
 
 ## 7. Operational Rule
 

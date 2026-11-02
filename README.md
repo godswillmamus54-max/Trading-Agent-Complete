@@ -21,13 +21,21 @@ Trading-Agent-Complete/
 |-- execution/
 |   `-- trade_executor_primary_only.py
 |-- tests/
+|   |-- test_bridge_safety_source.py
+|   `-- test_startup_launcher.py
 |-- docs/
-|-- requirements.txt
-|-- requirements-lock-py311-windows.txt
+|   |-- ARCHITECTURE.md
+|   |-- INSTALLATION.md
+|   |-- OPERATION_GUIDE.md
+|   `-- SAFETY_AND_RISK.md
 |-- .env.example
 |-- .gitignore
+|-- requirements.txt
+|-- requirements-lock-py311-windows.txt
 |-- run_bridge.py
-`-- run_agent.py
+|-- run_agent.py
+|-- start_trading_agent.py
+`-- START_TRADING_AGENT.bat
 ```
 
 ## Requirements
@@ -61,15 +69,30 @@ MT5_BRIDGE_URL=http://127.0.0.1:8000
 If MT5 is not detected automatically, set MT5_TERMINAL_PATH to the full path of your terminal executable.
 
 ## Running the System
-1. Open MetaTrader 5 and log in to the intended account.
-2. Open a PowerShell window in the project directory.
-3. Activate the virtual environment.
-4. Start the bridge:
-python run_bridge.py
-5. Open a second PowerShell window in the same project directory.
-6. Activate the same virtual environment.
-7. Start the trading engine:
-python run_agent.py
+
+### One-Click Startup (Windows)
+
+1. Open MetaTrader 5.
+2. Log in to your own demo account.
+3. Confirm that the terminal is connected.
+4. Confirm automated trading permissions.
+5. Double-click `START_TRADING_AGENT.bat`.
+6. Wait for the launcher to verify the bridge, MT5 connection, demo account mode, and trading permissions.
+7. The V28.5.2 trading engine starts only after the pre-flight checks pass.
+
+Keep the launcher window open while the system is operating.
+
+To request shutdown, press Ctrl+C in the launcher window and allow the processes to stop.
+
+### Manual Startup (Alternative)
+
+The bridge and trading engine can also be started separately:
+
+1. Activate the project's virtual environment.
+2. Run `python run_bridge.py` in the first terminal.
+3. Run `python run_agent.py` in a second terminal.
+
+The bridge must remain running while the trading engine operates.
 
 ## Important Trading Risk
 The supplied configuration contains aggressive risk settings:

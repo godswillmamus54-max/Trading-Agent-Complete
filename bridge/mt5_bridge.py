@@ -333,6 +333,12 @@ def account_endpoint(
         "server":
             account.server,
 
+        "trade_mode":
+            int(account.trade_mode),
+
+        "is_demo":
+            account.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO,
+
         "currency":
             account.currency,
 
