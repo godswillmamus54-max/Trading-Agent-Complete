@@ -1,7 +1,7 @@
 ﻿# Trading Agent Architecture
 ## Overview
 This package contains an XAUUSD trading system organized into strategy, execution, and bridge components.
-The supplied engine uses an H4 context, M15 structure, and M1 execution approach.
+The supplied V28.5.2 engine uses H4 directional context, M15 setup and opportunity generation, and M1 execution confirmation.
 ## Main Components
 ### Engine
 Location: `engine/`
@@ -24,11 +24,13 @@ Default bridge URL:
 `http://127.0.0.1:8000`
 The bridge uses an API key supplied through the environment.
 ## Trading Flow
-1. H4 trend context.
-2. M15 market structure.
-3. M1 setup detection.
-4. Execution request.
+1. H4 directional context.
+2. M15 setup and opportunity generation.
+3. M1 execution confirmation.
+4. Execution request through the primary execution path.
 5. Bridge-side validation and MT5 interaction.
+
+The M1 timeframe confirms an M15-generated opportunity; it is not the primary setup-generation timeframe.
 Actual trading outcomes depend on market conditions, broker behavior, terminal connectivity, and execution conditions.
 ## Important Configuration
 Review `engine/strategy_config.py` and `engine/risk_engine.py` before operating the system.

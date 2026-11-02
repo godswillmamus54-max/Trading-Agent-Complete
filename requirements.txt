@@ -1,6 +1,6 @@
-﻿fastapi
-uvicorn
-MetaTrader5
-requests
-pydantic
-python-dotenv
+fastapi==0.162.0
+uvicorn==0.54.0
+metatrader5==5.0.6231
+requests==2.34.2
+pydantic==2.14.2
+python-dotenv==1.2.4

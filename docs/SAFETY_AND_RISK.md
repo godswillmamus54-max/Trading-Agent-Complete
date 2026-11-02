@@ -25,6 +25,8 @@ Slippage, gaps, execution failures, broker conditions and other risks can cause 
 
 Do not trade with money you cannot afford to lose.
 
+The 10% setting is described as risk per new trading day, not risk per individual trade. The 20% value is the configured maximum daily loss setting. Both are aggressive software settings and must be independently reviewed and tested.
+
 ## 3. API Security
 
 - Keep the bridge bound to loopback unless a separately reviewed secure architecture is implemented.
@@ -67,3 +69,5 @@ A separate demo-account integration test is required.
 Do not switch to a live account as part of installation or packaging.
 
 Any future live deployment requires a separate review, explicit authorization and independent risk assessment.
+
+For reproducibility on a compatible Windows/Python 3.11 environment, the tested dependency snapshot is provided in `requirements-lock-py311-windows.txt`. The standard installation uses `requirements.txt`.

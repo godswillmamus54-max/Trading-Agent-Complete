@@ -14,7 +14,8 @@
 Open PowerShell in the project directory:
 
 ```powershell
-cd C:\trading-agent-portfolio\Trading-Agent-Complete
+# Open PowerShell inside the cloned Trading-Agent-Complete folder.
+Get-Location
 ```
 
 Create a virtual environment using Python 3.11, if installed and compatible:
@@ -33,7 +34,7 @@ Install the dependencies:
 
 ```powershell
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ## 2. Configure Environment Variables

@@ -1,32 +1,33 @@
 # XAUUSD Trading Agent
 A Python-based automated trading system for MetaTrader 5, built around a multi-timeframe market-structure strategy.
 ## Architecture
-- H4 context
-- M15 market structure
-- M1 setup detection and execution
-- Liquidity sweep, break of structure, breaker, retest and order workflow
+- H4 directional context
+- M15 setup and opportunity generation
+- M1 execution confirmation
+- M15 opportunity detection followed by M1 confirmation
 - MT5 bridge for market data and trade operations
 - Risk engine and trade audit logging
 - Primary execution path
 ## Project Structure
 ```text
 Trading-Agent-Complete/
-├── bridge/
-│   └── mt5_bridge.py
-├── engine/
-│   ├── live_multi_state_machine_v28_5_2_primary_only_breakeven.py
-│   ├── m1_setup_detector.py
-│   ├── strategy_config.py
-│   └── risk_engine.py
-├── execution/
-│   └── trade_executor_primary_only.py
-├── tests/
-├── docs/
-├── requirements.txt
-├── .env.example
-├── .gitignore
-├── run_bridge.py
-└── run_agent.py
+|-- bridge/
+|   `-- mt5_bridge.py
+|-- engine/
+|   |-- live_multi_state_machine_v28_5_2_primary_only_breakeven.py
+|   |-- m1_setup_detector.py
+|   |-- strategy_config.py
+|   `-- risk_engine.py
+|-- execution/
+|   `-- trade_executor_primary_only.py
+|-- tests/
+|-- docs/
+|-- requirements.txt
+|-- requirements-lock-py311-windows.txt
+|-- .env.example
+|-- .gitignore
+|-- run_bridge.py
+`-- run_agent.py
 ```
 
 ## Requirements

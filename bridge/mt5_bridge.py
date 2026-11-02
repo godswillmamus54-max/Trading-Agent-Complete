@@ -1,4 +1,5 @@
 import os
+import hmac
 import MetaTrader5 as mt5
 
 from fastapi import (
@@ -35,7 +36,7 @@ app = FastAPI(
 
 def verify_api_key(x_api_key: str | None):
 
-    if x_api_key != API_KEY:
+    if not isinstance(x_api_key, str) or not hmac.compare_digest(x_api_key, API_KEY):
 
         raise HTTPException(
             status_code=401,
