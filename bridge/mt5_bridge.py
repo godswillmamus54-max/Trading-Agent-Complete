@@ -1,5 +1,6 @@
 import os
 import hmac
+import math
 import MetaTrader5 as mt5
 
 from fastapi import (
@@ -684,7 +685,19 @@ def market(
                 info.volume_max,
 
             "volume_step":
-                info.volume_step
+                info.volume_step,
+
+            "trade_tick_size":
+                float(getattr(info, "trade_tick_size", 0.0) or 0.0),
+
+            "trade_tick_value":
+                float(getattr(info, "trade_tick_value", 0.0) or 0.0),
+
+            "trade_stops_level":
+                int(getattr(info, "trade_stops_level", 0) or 0),
+
+            "trade_freeze_level":
+                int(getattr(info, "trade_freeze_level", 0) or 0)
         },
 
         "current_tick":
@@ -1476,6 +1489,7 @@ def _find_position(ticket, symbol):
     return None
 
 
+
 @app.post("/position/modify")
 def modify_position(
     request: PositionModifyRequest,
@@ -1487,8 +1501,13 @@ def modify_position(
 
     symbol = request.symbol.upper()
     position = _find_position(request.ticket, symbol)
+
     if position is None:
-        raise HTTPException(status_code=404, detail=f"Position {request.ticket} not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Position {request.ticket} not found",
+        )
+
     if int(position.magic) != int(request.magic):
         raise HTTPException(
             status_code=403,
@@ -1496,31 +1515,143 @@ def modify_position(
         )
 
     info = mt5.symbol_info(symbol)
-    if info is None:
-        raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
+    tick = mt5.symbol_info_tick(symbol)
+
+    if info is None or tick is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to obtain symbol information or current tick",
+        )
 
     digits = int(info.digits)
+    point = float(info.point)
+    tick_size = float(getattr(info, "trade_tick_size", 0.0) or point)
+
+    if point <= 0 or tick_size <= 0:
+        raise HTTPException(
+            status_code=503,
+            detail="Invalid broker point or tick-size information",
+        )
+
     current_sl = float(position.sl or 0.0)
     current_tp = float(position.tp or 0.0)
-    sl = current_sl if request.sl is None else round(float(request.sl), digits)
-    tp = current_tp if request.tp is None else round(float(request.tp), digits)
 
-    if int(position.type) == int(mt5.POSITION_TYPE_BUY):
-        tick = mt5.symbol_info_tick(symbol)
-        if tick is None:
-            raise HTTPException(status_code=503, detail="No current tick")
-        if sl and sl >= float(tick.bid):
-            raise HTTPException(status_code=400, detail="BUY SL must remain below current bid")
-        if tp and tp <= float(tick.ask):
-            raise HTTPException(status_code=400, detail="BUY TP must remain above current ask")
+    is_buy = int(position.type) == int(mt5.POSITION_TYPE_BUY)
+
+    # Round proposed stops in the protective direction.
+    def round_sl_to_tick(price):
+        if price == 0:
+            return 0.0
+
+        units = float(price) / tick_size
+
+        if is_buy:
+            ticks = math.ceil(units - 1e-10)
+        else:
+            ticks = math.floor(units + 1e-10)
+
+        return round(ticks * tick_size, digits)
+
+    # Preserve the broker's existing TP exactly when unchanged.
+    if request.sl is None:
+        sl = current_sl
     else:
-        tick = mt5.symbol_info_tick(symbol)
-        if tick is None:
-            raise HTTPException(status_code=503, detail="No current tick")
-        if sl and sl <= float(tick.ask):
-            raise HTTPException(status_code=400, detail="SELL SL must remain above current ask")
-        if tp and tp >= float(tick.bid):
-            raise HTTPException(status_code=400, detail="SELL TP must remain below current bid")
+        sl = round_sl_to_tick(float(request.sl))
+
+    if request.tp is None:
+        tp = current_tp
+    else:
+        requested_tp = float(request.tp)
+
+        if abs(requested_tp - current_tp) < 1e-9:
+            tp = current_tp
+        else:
+            tp = round(
+                round(requested_tp / tick_size) * tick_size,
+                digits,
+            )
+
+    bid = float(tick.bid)
+    ask = float(tick.ask)
+
+    stops_level = int(getattr(info, "trade_stops_level", 0) or 0)
+    freeze_level = int(getattr(info, "trade_freeze_level", 0) or 0)
+
+    minimum_stop_distance = stops_level * point
+    freeze_distance = freeze_level * point
+
+    reference_price = bid if is_buy else ask
+
+    # Validate BUY stop and target.
+    sl_changed = request.sl is not None and abs(sl - current_sl) > 1e-9
+    tp_changed = request.tp is not None and abs(tp - current_tp) > 1e-9
+
+    if is_buy:
+
+        if sl_changed and sl and sl >= bid:
+            raise HTTPException(
+                status_code=400,
+                detail="BUY SL must remain below current bid",
+            )
+
+        if tp_changed and tp and tp <= ask:
+            raise HTTPException(
+                status_code=400,
+                detail="BUY TP must remain above current ask",
+            )
+
+        if sl_changed and sl and bid - sl < minimum_stop_distance:
+            raise HTTPException(
+                status_code=400,
+                detail="BUY SL violates broker minimum stop distance",
+            )
+
+        if tp_changed and tp and tp - ask < minimum_stop_distance:
+            raise HTTPException(
+                status_code=400,
+                detail="BUY TP violates broker minimum stop distance",
+            )
+
+    # Validate SELL stop and target.
+    else:
+        if sl_changed and sl and sl <= ask:
+            raise HTTPException(
+                status_code=400,
+                detail="SELL SL must remain above current ask",
+            )
+
+        if tp_changed and tp and tp >= bid:
+            raise HTTPException(
+                status_code=400,
+                detail="SELL TP must remain below current bid",
+            )
+
+        if sl_changed and sl and sl - ask < minimum_stop_distance:
+            raise HTTPException(
+                status_code=400,
+                detail="SELL SL violates broker minimum stop distance",
+            )
+
+        if tp_changed and tp and bid - tp < minimum_stop_distance:
+            raise HTTPException(
+                status_code=400,
+                detail="SELL TP violates broker minimum stop distance",
+            )
+
+    # Freeze-level check: reject modifications too close to market.
+    # This is a conservative pre-check; the broker remains authoritative.
+    if freeze_distance > 0:
+        if sl_changed and sl and abs(reference_price - sl) <= freeze_distance:
+            raise HTTPException(
+                status_code=400,
+                detail="SL is inside broker freeze level",
+            )
+
+        if tp_changed and tp and abs(reference_price - tp) <= freeze_distance:
+            raise HTTPException(
+                status_code=400,
+                detail="TP is inside broker freeze level",
+            )
 
     request_payload = {
         "action": mt5.TRADE_ACTION_SLTP,
@@ -1531,14 +1662,58 @@ def modify_position(
     }
 
     ensure_demo_account()
+
     result = mt5.order_send(request_payload)
+
     if result is None:
         raise HTTPException(
             status_code=503,
-            detail={"error": "MT5 order_send returned None", "mt5_error": str(mt5.last_error())},
+            detail={
+                "error": "MT5 order_send returned None",
+                "mt5_error": str(mt5.last_error()),
+            },
         )
 
     success = int(result.retcode) == int(mt5.TRADE_RETCODE_DONE)
+
+    observed_position = None
+
+    if success:
+        observed_position = _find_position(request.ticket, symbol)
+
+        if observed_position is None:
+            success = False
+        else:
+            observed_sl_check = float(observed_position.sl or 0.0)
+            observed_tp_check = float(observed_position.tp or 0.0)
+
+            sl_matches = (
+                abs(observed_sl_check - sl) <= max(point, tick_size) * 0.51
+                if sl > 0
+                else observed_sl_check == 0.0
+            )
+
+            tp_matches = (
+                abs(observed_tp_check - tp) <= max(point, tick_size) * 0.51
+                if tp > 0
+                else observed_tp_check == 0.0
+            )
+
+            if not sl_matches or not tp_matches:
+                success = False
+
+    observed_sl = (
+        float(observed_position.sl or 0.0)
+        if observed_position is not None
+        else None
+    )
+
+    observed_tp = (
+        float(observed_position.tp or 0.0)
+        if observed_position is not None
+        else None
+    )
+
     response = {
         "success": success,
         "retcode": int(result.retcode),
@@ -1547,6 +1722,10 @@ def modify_position(
         "ticket": int(position.ticket),
         "sl": sl,
         "tp": tp,
+        "broker_stops_level": stops_level,
+        "broker_freeze_level": freeze_level,
+        "observed_sl": observed_sl,
+        "observed_tp": observed_tp,
     }
 
     if not success:
@@ -1562,6 +1741,143 @@ def modify_position(
     return response
 
 
+@app.get("/position/profit-at-price")
+def position_profit_at_price(
+    ticket: int,
+    close_price: float,
+    x_api_key: str | None = Header(default=None),
+):
+    """Estimate position P/L at a proposed closing price."""
+
+    verify_api_key(x_api_key)
+    ensure_connection()
+    ensure_demo_account()
+
+    positions = mt5.positions_get(ticket=int(ticket))
+
+    if not positions:
+        raise HTTPException(
+            status_code=404,
+            detail="Position not found",
+        )
+
+    position = positions[0]
+
+    # Only calculate profit for positions owned by this agent.
+    if int(position.magic) != MAGIC:
+        raise HTTPException(
+            status_code=403,
+            detail="Position ownership check failed: magic number does not match",
+        )
+
+    symbol = position.symbol
+
+    info = mt5.symbol_info(symbol)
+    tick = mt5.symbol_info_tick(symbol)
+
+    if info is None or tick is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to obtain symbol information or current tick",
+        )
+
+    is_buy = int(position.type) == int(mt5.POSITION_TYPE_BUY)
+
+    order_type = (
+        mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
+    )
+
+    close_price = float(close_price)
+
+    if close_price <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Closing price must be positive",
+        )
+
+    # Normalize the proposed protective stop to the broker tick size.
+    point = float(info.point)
+    tick_size = float(getattr(info, "trade_tick_size", 0.0) or point)
+
+    if point <= 0 or tick_size <= 0:
+        raise HTTPException(
+            status_code=503,
+            detail="Invalid broker point or tick-size information",
+        )
+
+    units = close_price / tick_size
+
+    if is_buy:
+        ticks = math.ceil(units - 1e-10)
+    else:
+        ticks = math.floor(units + 1e-10)
+
+    close_price = round(ticks * tick_size, int(info.digits))
+
+    gross = mt5.order_calc_profit(
+        order_type,
+        symbol,
+        float(position.volume),
+        float(position.price_open),
+        close_price,
+    )
+
+    if gross is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "MT5 order_calc_profit failed",
+                "mt5_error": str(mt5.last_error()),
+            },
+        )
+
+    deals = mt5.history_deals_get(
+        position=int(getattr(position, "identifier", ticket))
+    )
+
+    opening_commission = 0.0
+    commission_data_observed = False
+
+    if deals is not None:
+        for deal in deals:
+            if int(getattr(deal, "entry", -1)) == int(mt5.DEAL_ENTRY_IN):
+                fee = abs(
+                    float(getattr(deal, "commission", 0.0) or 0.0)
+                )
+                opening_commission += fee
+
+                if fee > 0:
+                    commission_data_observed = True
+
+    # Estimate only: actual closing commission may differ.
+    estimated_round_turn_commission = opening_commission * 2.0
+
+    swap = float(getattr(position, "swap", 0.0) or 0.0)
+
+    estimated_net = (
+        float(gross)
+        - estimated_round_turn_commission
+        + swap
+    )
+
+    return {
+        "ticket": int(ticket),
+        "symbol": symbol,
+        "magic": int(position.magic),
+        "direction": "BUY" if is_buy else "SELL",
+        "close_price": close_price,
+        "gross_profit": round(float(gross), 2),
+        "observed_open_commission": round(opening_commission, 2),
+        "estimated_round_turn_commission": round(
+            estimated_round_turn_commission, 2
+        ),
+        "commission_data_observed": commission_data_observed,
+        "swap": round(swap, 2),
+        "estimated_net_profit": round(estimated_net, 2),
+        "estimate_only": True,
+    }
+
+
 @app.post("/position/close")
 def close_position(
     request: PositionCloseRequest,
@@ -1573,6 +1889,7 @@ def close_position(
 
     symbol = request.symbol.upper()
     position = _find_position(request.ticket, symbol)
+
     if position is None:
         return {
             "success": True,
@@ -1589,15 +1906,25 @@ def close_position(
 
     info = mt5.symbol_info(symbol)
     tick = mt5.symbol_info_tick(symbol)
+
     if info is None or tick is None:
-        raise HTTPException(status_code=503, detail="Unable to read symbol/tick for close")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to read symbol/tick for close",
+        )
 
     close_type = (
         mt5.ORDER_TYPE_SELL
         if int(position.type) == int(mt5.POSITION_TYPE_BUY)
         else mt5.ORDER_TYPE_BUY
     )
-    price = float(tick.bid) if close_type == mt5.ORDER_TYPE_SELL else float(tick.ask)
+
+    price = (
+        float(tick.bid)
+        if close_type == mt5.ORDER_TYPE_SELL
+        else float(tick.ask)
+    )
+
     filling_constant, filling_name = _select_market_filling(info)
 
     trade_request = {
@@ -1616,15 +1943,20 @@ def close_position(
 
     print(
         f"[POSITION CLOSE] ticket={int(position.ticket)} "
-        f"symbol={symbol} volume={float(position.volume):.2f} filling={filling_name}"
+        f"symbol={symbol} volume={float(position.volume):.2f} "
+        f"filling={filling_name}"
     )
 
     ensure_demo_account()
     result = mt5.order_send(trade_request)
+
     if result is None:
         raise HTTPException(
             status_code=503,
-            detail={"error": "MT5 close order_send returned None", "mt5_error": str(mt5.last_error())},
+            detail={
+                "error": "MT5 close order_send returned None",
+                "mt5_error": str(mt5.last_error()),
+            },
         )
 
     success = int(result.retcode) in {
@@ -1656,7 +1988,6 @@ def close_position(
         )
 
     return response
-
 
 # ============================================================
 # SHUTDOWN

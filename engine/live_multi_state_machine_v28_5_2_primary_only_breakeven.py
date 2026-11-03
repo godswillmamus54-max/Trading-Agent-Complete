@@ -122,7 +122,7 @@ EXECUTION_ENABLED = True
 RR_RATIO = 2.0
 # V27: risk-quality test. Broker minimum is 0.01 lots, so the initial
 # XAUUSD stop is reduced to keep the actual dollar risk materially below V27.
-INITIAL_SL_DISTANCE = 3.0
+INITIAL_SL_DISTANCE = 10.0
 FIXED_VOLUME = 0.01
 MAX_RISK_PER_TRADE_PERCENT = 0.08   # Demo-only ceiling; keep the configured stop intact and reject if it exceeds 8% of balance.
 MAX_OPEN_XAU_POSITIONS = 1  # Controlled demo test: one XAUUSD position at a time.
@@ -141,13 +141,13 @@ H4_SOFT_BIAS_ENABLED = True    # H4 guides confidence; it does not hard-block th
 COUNTER_H4_M15_MAX_DISTANCE = 30.0  # Counter-H4 entries need tighter M15 zone alignment than normal entries.
 COUNTER_H4_MIN_ZONE_STRENGTH = 0.0   # 0 = use existing M15 strength without inventing a new score threshold.
 STRONG_TURN_ENABLED = False  # Legacy provider turn exception; no separate hard block is used in v15.
-# V27: do not move to BE on a small early fluctuation. Protection begins at
-# approximately 1R, and M1 trailing starts only after 1.25R.
-BE_TRIGGER_PRICE_PERCENT = 0.0       # V27 uses R-multiple trigger instead.
-BE_TRIGGER_R = 1.00
-TRAIL_TRIGGER_R = 1.25
-BE_PLUS = 0.10
-TRAIL_BUFFER = 0.05
+# V29: Previous breakeven and candle-trailing settings retired.
+# All SL protection is handled by the V29 profit-protection manager.
+
+# V29 profit protection
+PROFIT_LOCK_TARGET_USD = 3.0
+PROFIT_PROTECTION_STEP = 5.0
+PROFIT_PROTECTION_API_TIMEOUT = 5.0
 
 POSITION_MANAGER_ENABLED = True
 MANAGE_MAGIC = 260927
@@ -1089,67 +1089,188 @@ def manage_open_positions(data, h4_trend, market_time, state=None, silent=False)
         r_multiple = favorable_move / initial_risk_distance if favorable_move > 0 else 0.0
         rec["max_r_multiple"] = max(float(rec.get("max_r_multiple", 0.0)), r_multiple)
 
-        # V27: BE only after approximately 1R. This avoids converting normal
-        # early M1 noise into tiny wins / scratch trades.
-        be_trigger_reached = r_multiple >= BE_TRIGGER_R
-        if be_trigger_reached:
-            breakeven_sl = entry + BE_PLUS if direction == "BUY" else entry - BE_PLUS
-            if _is_more_protective(direction, current_sl, breakeven_sl):
-                try:
-                    result = modify_position(ticket, SYMBOL, breakeven_sl, current_tp)
-                    rec["be_triggered"] = True
-                    rec["last_action"] = "BE_PLUS"
-                    audit_event("V27_BE_PLUS_ACTIVATED", {
-                        "ticket": ticket, "direction": direction, "entry": entry,
-                        "r_multiple": r_multiple,
-                        "trigger_required_r": BE_TRIGGER_R,
-                        "new_sl": breakeven_sl, "profit_at_activation": profit,
-                        "result": result,
-                    })
-                    print(
-                        f"[V27 BE+ PROTECTED] ticket={ticket} R={r_multiple:.2f} "
-                        f"trigger={BE_TRIGGER_R:.2f} new_sl={breakeven_sl:.2f} result={result}"
-                    )
-                    current_sl = breakeven_sl
-                    protected += 1
-                except Exception as error:
-                    print(f"[V27 BE+ ERROR] ticket={ticket} {type(error).__name__}: {error}")
 
-        # V27: trailing is delayed until 1.25R. The previous M1 candle is
-        # retained as the trail reference, but it can no longer activate early.
-        if len(candles) >= 2 and r_multiple >= TRAIL_TRIGGER_R:
-            prev = candles[-1]
-            trail_sl = (
-                float(prev["low"]) - TRAIL_BUFFER
-                if direction == "BUY"
-                else float(prev["high"]) + TRAIL_BUFFER
-            )
-            minimum_protected_sl = entry + BE_PLUS if direction == "BUY" else entry - BE_PLUS
-            trail_sl = (
-                max(trail_sl, minimum_protected_sl)
-                if direction == "BUY"
-                else min(trail_sl, minimum_protected_sl)
-            )
-            if _is_more_protective(direction, current_sl, trail_sl):
-                valid = trail_sl < current_price if direction == "BUY" else trail_sl > current_price
-                if valid:
-                    try:
-                        result = modify_position(ticket, SYMBOL, trail_sl, current_tp)
-                        rec["trail_updates"] = int(rec.get("trail_updates", 0)) + 1
-                        rec["last_action"] = "TRAIL"
-                        audit_event("V27_TRAIL_UPDATED", {
-                            "ticket": ticket, "direction": direction, "entry": entry,
-                            "current_price": current_price, "r_multiple": r_multiple,
-                            "new_sl": trail_sl, "profit_at_update": profit, "result": result,
-                        })
-                        print(
-                            f"[V27 TRAILING] ticket={ticket} R={r_multiple:.2f} "
-                            f"new_sl={trail_sl:.2f} result={result}"
+        # V29: broker-aware profit lock and fixed 5-price-unit ratchet.
+        # First stage targets estimated $3 net profit.
+        # Subsequent stages lock 5, 10, 15... price units from entry.
+
+        if favorable_move >= PROFIT_PROTECTION_STEP:
+            try:
+                candidate_sl = None
+                protection_stage = int(
+                    favorable_move // PROFIT_PROTECTION_STEP
+                )
+
+                if protection_stage == 1:
+                    headers = {
+                        "x-api-key": os.environ["MT5_BRIDGE_API_KEY"]
+                    }
+
+                    # BUY: entry is the lower-profit boundary.
+                    # SELL: current price is the higher-profit boundary.
+                    if direction == "BUY":
+                        low = entry
+                        high = current_price
+                    else:
+                        low = current_price
+                        high = entry
+
+                    best_candidate = None
+                    best_estimate = None
+
+                    # Find the closest-to-market stop that meets
+                    # the estimated profit target.
+                    for _ in range(18):
+                        mid = (low + high) / 2.0
+
+                        response = requests.get(
+                            f"{BRIDGE_URL}/position/profit-at-price",
+                            headers=headers,
+                            params={
+                                "ticket": ticket,
+                                "close_price": mid,
+                            },
+                            timeout=PROFIT_PROTECTION_API_TIMEOUT,
                         )
-                        protected += 1
-                    except Exception as error:
-                        if not silent:
-                            print(f"[V27 TRAIL ERROR] ticket={ticket} {type(error).__name__}: {error}")
+                        response.raise_for_status()
+                        estimate = response.json()
+
+                        meets_target = (
+                            float(
+                                estimate.get(
+                                    "estimated_net_profit",
+                                    float("-inf"),
+                                )
+                            ) >= PROFIT_LOCK_TARGET_USD
+                        )
+
+                        if direction == "BUY":
+                            if meets_target:
+                                high = mid
+                                best_candidate = mid
+                                best_estimate = estimate
+                            else:
+                                low = mid
+                        else:
+                            if meets_target:
+                                low = mid
+                                best_candidate = mid
+                                best_estimate = estimate
+                            else:
+                                high = mid
+
+                    if best_candidate is not None:
+                        candidate_sl = best_candidate
+
+                        # Recheck the actual final candidate.
+                        verify_response = requests.get(
+                            f"{BRIDGE_URL}/position/profit-at-price",
+                            headers=headers,
+                            params={
+                                "ticket": ticket,
+                                "close_price": candidate_sl,
+                            },
+                            timeout=PROFIT_PROTECTION_API_TIMEOUT,
+                        )
+                        verify_response.raise_for_status()
+                        final_estimate = verify_response.json()
+
+                        if float(
+                            final_estimate.get(
+                                "estimated_net_profit",
+                                float("-inf"),
+                            )
+                        ) < PROFIT_LOCK_TARGET_USD:
+                            candidate_sl = None
+                        else:
+                            # Use the exact broker-tick-normalized price
+                            # that was used by the bridge profit calculation.
+                            candidate_sl = float(final_estimate["close_price"])
+                            rec["first_lock_estimate"] = final_estimate
+
+                else:
+                    locked_distance = (
+                        protection_stage - 1
+                    ) * PROFIT_PROTECTION_STEP
+
+                    candidate_sl = (
+                        entry + locked_distance
+                        if direction == "BUY"
+                        else entry - locked_distance
+                    )
+
+                if candidate_sl is not None:
+                    candidate_sl = float(candidate_sl)
+
+                    valid = (
+                        candidate_sl < current_price
+                        if direction == "BUY"
+                        else candidate_sl > current_price
+                    )
+
+                    if valid and _is_more_protective(
+                        direction,
+                        current_sl,
+                        candidate_sl,
+                    ):
+                        result = modify_position(
+                            ticket,
+                            SYMBOL,
+                            candidate_sl,
+                            current_tp,
+                        )
+
+                        # Only record success if the bridge confirms it.
+                        if (
+                            isinstance(result, dict)
+                            and result.get("success") is True
+                            and result.get("observed_sl") is not None
+                        ):
+                            actual_sl = float(result["observed_sl"])
+                            rec["trail_updates"] = (
+                                int(rec.get("trail_updates", 0)) + 1
+                            )
+                            rec["last_action"] = "PROFIT_LOCK_STEP"
+                            rec["last_protection_stage"] = protection_stage
+                            rec["last_sl"] = actual_sl
+
+                            audit_event(
+                                "V29_PROFIT_LOCK_UPDATED",
+                                {
+                                    "ticket": ticket,
+                                    "direction": direction,
+                                    "entry": entry,
+                                    "current_price": current_price,
+                                    "favorable_move": favorable_move,
+                                    "stage": protection_stage,
+                                    "requested_sl": candidate_sl,
+                                    "new_sl": actual_sl,
+                                    "profit_at_update": profit,
+                                    "estimate": rec.get("first_lock_estimate"),
+                                    "result": result,
+                                },
+                            )
+
+                            print(
+                                f"[V29 PROFIT LOCK] ticket={ticket} "
+                                f"stage={protection_stage} "
+                                f"SL={actual_sl:.2f} "
+                                f"move={favorable_move:.2f}"
+                            )
+
+                            current_sl = actual_sl
+                            protected += 1
+                        else:
+                            print(
+                                f"[V29 PROFIT LOCK NOT CONFIRMED] "
+                                f"ticket={ticket} result={result}"
+                            )
+
+            except Exception as error:
+                print(
+                    f"[V29 PROFIT LOCK ERROR] ticket={ticket} "
+                    f"{type(error).__name__}: {error}"
+                )
 
     return {"managed":len(xau),"protected":protected,"closed":closed,"active_tickets":sorted(int(x) for x in active_tickets)}
 
